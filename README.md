@@ -41,7 +41,7 @@ $gdImage = imagecreatefromjpeg('original.jpg');
 
 $result = ImageGuard::check(
     'original.jpg',
-    function (int $quality) use ($gdImage): string {
+    function (int $quality, string $originalPath) use ($gdImage): string {
         $out = "/tmp/compressed_q{$quality}.jpg";
         imagejpeg($gdImage, $out, $quality);
         return $out;
@@ -89,6 +89,8 @@ if ($result->failed()) {
 | `'balanced'` | 0.92           |
 | `'loose'`    | 0.85           |
 
+Custom numeric thresholds are typically used in the `0.0` to `1.0` range.
+
 ### Failure Behaviors
 
 | `OnFailBehavior` | Action                                              |
@@ -120,16 +122,19 @@ file_put_contents('audit.csv', $report->toCsv());
 
 ## Compressor Examples
 
-The compressor callable receives a `quality` integer and **must return
-the path to the compressed file**. This decouples `php-image-guard`
-from any specific tool.
+The compressor callable receives a `quality` integer and the `originalPath`
+string, and **must return the path to the compressed file**. This decouples
+`php-image-guard` from any specific tool.
 
 ### Plain GD
 
 ```php
-$compressor = function (int $quality) use ($gdImage, $tmpDir): string {
+$compressor = function (int $quality, string $originalPath) use ($tmpDir): string
+{
+    $gdImage = imagecreatefromjpeg($originalPath);
     $output = "{$tmpDir}/compressed_q{$quality}.jpg";
     imagejpeg($gdImage, $output, $quality);
+    imagedestroy($gdImage);
     return $output;
 };
 ```
@@ -140,9 +145,10 @@ $compressor = function (int $quality) use ($gdImage, $tmpDir): string {
 use Spatie\ImageOptimizer\OptimizerChain;
 use Spatie\ImageOptimizer\Optimizers\Jpegoptim;
 
-$compressor = function (int $quality) use ($sourcePath, $tmpDir): string {
+$compressor = function (int $quality, string $originalPath) use ($tmpDir): string
+{
     $output = "{$tmpDir}/compressed_q{$quality}.jpg";
-    copy($sourcePath, $output);
+    copy($originalPath, $output);
     (new OptimizerChain)->addOptimizer(
         new Jpegoptim(['--max=' . $quality])
     )->optimize($output);
@@ -153,9 +159,12 @@ $compressor = function (int $quality) use ($sourcePath, $tmpDir): string {
 ### With `intervention/image`
 
 ```php
-$compressor = function (int $quality) use ($image, $tmpDir): string {
+$compressor = function (
+    int $quality,
+    string $originalPath,
+) use ($manager, $tmpDir): string {
     $output = "{$tmpDir}/compressed_q{$quality}.webp";
-    $image->toWebp($quality)->save($output);
+    $manager->read($originalPath)->toWebp($quality)->save($output);
     return $output;
 };
 ```
@@ -189,13 +198,16 @@ $result->toJson()        // JSON string
 
 ## SSIM Accuracy
 
+These are practical expectations aligned with the current test suite and
+generated fixtures (not universal guarantees for every image set).
+
 | Scenario         | Expected        |
 |------------------|-----------------|
 | Identical images | SSIM = 1.000000 |
 | White vs black   | SSIM < 0.05     |
 | JPEG quality 95  | SSIM > 0.98     |
-| JPEG quality 10  | SSIM < 0.80     |
-| PNG vs 50% WebP  | 0.85–0.98       |
+| JPEG quality 10  | SSIM < 0.92     |
+| PNG vs 50% WebP  | 0.85–0.995      |
 
 ---
 
